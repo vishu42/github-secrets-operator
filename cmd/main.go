@@ -144,11 +144,11 @@ func main() {
 		os.Exit(1)
 	}
 
-	if err = (&controller.GithubSecretReconciler{
+	if err = (&controller.SecretSyncReconciler{
 		Client: mgr.GetClient(),
 		Scheme: mgr.GetScheme(),
 	}).SetupWithManager(mgr); err != nil {
-		setupLog.Error(err, "unable to create controller", "controller", "GithubSecret")
+		setupLog.Error(err, "unable to create controller", "controller", "SecretSync")
 		os.Exit(1)
 	}
 	// +kubebuilder:scaffold:builder

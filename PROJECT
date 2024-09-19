@@ -14,7 +14,7 @@ resources:
   controller: true
   domain: vishu42.github.io
   group: main
-  kind: GithubSecret
+  kind: SecretSync
   path: github.com/vishu42/github-secrets-operator/api/v1beta1
   version: v1beta1
 version: "3"
