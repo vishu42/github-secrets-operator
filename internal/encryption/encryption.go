@@ -2,14 +2,14 @@ package encryption
 
 import (
 	"crypto/rand"
+	crypto_rand "crypto/rand"
 	"encoding/base64"
 	"fmt"
 
+	"github.com/google/go-github/v65/github"
 	"golang.org/x/crypto/nacl/box"
 )
 
-// encryptSecret encrypts the secret value using the GitHub public key.
-// GitHub uses NaCl (Networking and Cryptography Library) box encryption.
 func EncryptSecret(publicKeyBase64 string, secretValue string) (string, error) {
 	// Decode the GitHub public key from base64
 	publicKeyBytes, err := base64.StdEncoding.DecodeString(publicKeyBase64)
@@ -37,4 +37,28 @@ func EncryptSecret(publicKeyBase64 string, secretValue string) (string, error) {
 	encryptedSecretBase64 := base64.StdEncoding.EncodeToString(encryptedBytes)
 
 	return encryptedSecretBase64, nil
+}
+
+func EncryptSecretWithPublicKey(publicKey *github.PublicKey, secretName string, secretValue string) (*github.EncryptedSecret, error) {
+	decodedPublicKey, err := base64.StdEncoding.DecodeString(publicKey.GetKey())
+	if err != nil {
+		return nil, fmt.Errorf("base64.StdEncoding.DecodeString was unable to decode public key: %v", err)
+	}
+
+	var boxKey [32]byte
+	copy(boxKey[:], decodedPublicKey)
+	secretBytes := []byte(secretValue)
+	encryptedBytes, err := box.SealAnonymous([]byte{}, secretBytes, &boxKey, crypto_rand.Reader)
+	if err != nil {
+		return nil, fmt.Errorf("box.SealAnonymous failed with error %w", err)
+	}
+
+	encryptedString := base64.StdEncoding.EncodeToString(encryptedBytes)
+	keyID := publicKey.GetKeyID()
+	encryptedSecret := &github.EncryptedSecret{
+		Name:           secretName,
+		KeyID:          keyID,
+		EncryptedValue: encryptedString,
+	}
+	return encryptedSecret, nil
 }

@@ -29,9 +29,9 @@ type SecretSyncSpec struct {
 	// Important: Run "make" to regenerate code after modifying this file
 
 	// Azure Key Vault information
-	AzureKeyVault AzureKeyVault `json:"azureKeyVault,omitempty"`
+	AzureKeyVault AzureKeyVault `json:"azureKeyVault"`
 	// GitHub repository information
-	Github Github `json:"github,omitempty"`
+	Github Github `json:"github"`
 	// Mappings between Key Vault secrets and GitHub secrets
 	Mappings []SecretMapping `json:"mappings,omitempty"`
 }

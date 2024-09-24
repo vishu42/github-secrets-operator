@@ -59,7 +59,9 @@ type AuthCache struct {
 	GithubClient    *github.Client
 }
 
-var authCacheMap = sync.Map{}
+var (
+	authCacheMap = sync.Map{}
+)
 
 // +kubebuilder:rbac:groups=main.vishu42.github.io,resources=secretsyncs,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=main.vishu42.github.io,resources=secretsyncs/status,verbs=get;update;patch
@@ -172,38 +174,30 @@ func (r *SecretSyncReconciler) createOrUpdateGithubSecret(
 		return err
 	}
 
-	// Encrypt the secret value using the public key
-	encryptedSecret, err := encryption.EncryptSecret(publicKey.GetKey(), secretValue)
-	if err != nil {
-		return fmt.Errorf("failed to encrypt secret: %v", err)
-	}
-
 	// Handle creating or updating the secret (repo/org/environment)
 	switch secretSync.Spec.Github.SecretLevel {
 	case "org":
 		// Create or update organization-level secret
-		secretRequest := &github.EncryptedSecret{
-			Name:           mapping.GithubSecret,
-			KeyID:          publicKey.GetKeyID(),
-			EncryptedValue: encryptedSecret,
+		encryptedSecret, err := encryption.EncryptSecretWithPublicKey(publicKey, mapping.GithubSecret, secretValue)
+		if err != nil {
+			return fmt.Errorf("failed encrypt secret: %v", err)
 		}
-		_, err = ac.GithubClient.Actions.CreateOrUpdateOrgSecret(ctx, secretSync.Spec.Github.Owner, secretRequest)
+		_, err = ac.GithubClient.Actions.CreateOrUpdateOrgSecret(ctx, secretSync.Spec.Github.Owner, encryptedSecret)
 		if err != nil {
 			return fmt.Errorf("failed to create or update GitHub organization secret: %v", err)
 		}
 
 	case "repo":
 		// Create or update repository-level secret
-		secretRequest := &github.EncryptedSecret{
-			Name:           mapping.GithubSecret,
-			KeyID:          publicKey.GetKeyID(),
-			EncryptedValue: encryptedSecret,
+		encryptedSecret, err := encryption.EncryptSecretWithPublicKey(publicKey, mapping.GithubSecret, secretValue)
+		if err != nil {
+			return fmt.Errorf("failed encrypt secret: %v", err)
 		}
 		_, err = ac.GithubClient.Actions.CreateOrUpdateRepoSecret(
 			ctx,
 			secretSync.Spec.Github.Owner,
 			secretSync.Spec.Github.Repo,
-			secretRequest,
+			encryptedSecret,
 		)
 		if err != nil {
 			return fmt.Errorf("failed to create or update GitHub repository secret: %v", err)
@@ -215,16 +209,15 @@ func (r *SecretSyncReconciler) createOrUpdateGithubSecret(
 			return fmt.Errorf("failed to fetch GitHub repository details: %w", err)
 		}
 		// Create or update environment-level secret using the repo ID
-		secretRequest := &github.EncryptedSecret{
-			Name:           mapping.GithubSecret,
-			KeyID:          publicKey.GetKeyID(),
-			EncryptedValue: encryptedSecret,
+		encryptedSecret, err := encryption.EncryptSecretWithPublicKey(publicKey, mapping.GithubSecret, secretValue)
+		if err != nil {
+			return fmt.Errorf("failed encrypt secret: %v", err)
 		}
 		_, err = ac.GithubClient.Actions.CreateOrUpdateEnvSecret(
 			ctx,
 			int(repo.GetID()), // Using the repo ID
 			secretSync.Spec.Github.Environment,
-			secretRequest,
+			encryptedSecret,
 		)
 		if err != nil {
 			return fmt.Errorf("failed to create or update GitHub environment secret: %v", err)
@@ -257,6 +250,9 @@ func ServiceClient(namespacedName types.NamespacedName, githubToken, tenantId, c
 	if !ok {
 		// Cache not found, generate new client
 		cred, err := azidentity.NewClientSecretCredential(tenantId, clientId, clientSecret, nil)
+		l.Println("tenantId", tenantId)
+		l.Println("clientId", clientId)
+		l.Println("clientsecret", clientSecret)
 		if err != nil {
 			return nil, fmt.Errorf("failed to obtain a credential: %v", err)
 		}
