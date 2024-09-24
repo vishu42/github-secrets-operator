@@ -20,13 +20,14 @@ import (
 	"context"
 	"fmt"
 	l "log"
-	"os"
+	"sync"
 	"time"
 
 	"github.com/Azure/azure-sdk-for-go/sdk/azidentity"
 	"github.com/Azure/azure-sdk-for-go/sdk/keyvault/azsecrets"
 	"golang.org/x/oauth2"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
@@ -40,10 +41,15 @@ import (
 type SecretSyncReconciler struct {
 	client.Client
 	Scheme              *runtime.Scheme
-	AzureClient         *azsecrets.Client
-	GithubClient        *github.Client
 	KeyVaultSecretIndex map[string]*time.Time
 }
+
+type AuthCache struct {
+	AzSecretsClient *azsecrets.Client
+	GithubClient    *github.Client
+}
+
+var authCacheMap = sync.Map{}
 
 // +kubebuilder:rbac:groups=main.vishu42.github.io,resources=secretsyncs,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=main.vishu42.github.io,resources=secretsyncs/status,verbs=get;update;patch
@@ -59,16 +65,22 @@ type SecretSyncReconciler struct {
 // For more details, check Reconcile and its Result here:
 // - https://pkg.go.dev/sigs.k8s.io/controller-runtime@v0.19.0/pkg/reconcile
 func (r *SecretSyncReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
-	_ = log.FromContext(ctx)
+	log := log.FromContext(ctx)
 
 	// TODO(user): your logic here
 	fmt.Println("reconciling......")
-	// // Fetch the SecretSync instance
-	// var secretSync mainv1beta1.SecretSync
-	// if err := r.Get(ctx, req.NamespacedName, &secretSync); err != nil {
-	// 	log.Error(err, "unable to fetch SecretSync")
-	// 	return ctrl.Result{}, client.IgnoreNotFound(err)
-	// }
+
+	// Fetch the SecretSync instance
+	var secretSync mainv1beta1.SecretSync
+	if err := r.Get(ctx, req.NamespacedName, &secretSync); err != nil {
+		log.Error(err, "unable to fetch SecretSync")
+		return ctrl.Result{}, client.IgnoreNotFound(err)
+	}
+
+	ac, err := ServiceClient(req.NamespacedName, secretSync.Spec.Github.Token, secretSync.Spec.AzureKeyVault.TenantID, secretSync.Spec.AzureKeyVault.ClientID, secretSync.Spec.AzureKeyVault.ClientSecret, secretSync.Spec.AzureKeyVault.VaultName)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
 
 	// // iterate over secrets in spec
 	// for i := range secretSync.Spec.Mappings {
@@ -107,20 +119,6 @@ func (r *SecretSyncReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 
 // SetupWithManager sets up the controller with the Manager.
 func (r *SecretSyncReconciler) SetupWithManager(mgr ctrl.Manager) error {
-	// Azure Key Vault authentication
-	azureClient, err := NewAzureKeyVaultClient()
-	if err != nil {
-		return err
-	}
-	r.AzureClient = azureClient
-
-	// GitHub authentication
-	githubClient, err := NewGitHubClient()
-	if err != nil {
-		return err
-	}
-	r.GithubClient = githubClient
-
 	r.KeyVaultSecretIndex = make(map[string]*time.Time)
 
 	return ctrl.NewControllerManagedBy(mgr).
@@ -128,30 +126,37 @@ func (r *SecretSyncReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Complete(r)
 }
 
-func NewAzureKeyVaultClient() (*azsecrets.Client, error) {
-	// Initialize the in-cluster Kubernetes client
-	tenantID := os.Getenv("AZURE_TENANT_ID")
-	clientID := os.Getenv("AZURE_CLIENT_ID")
-	clientSecret := os.Getenv("AZURE_CLIENT_SECRET")
-	vaultURI := fmt.Sprintf("https://%s.vault.azure.net/", os.Getenv("KEY_VAULT_NAME"))
+// TODO: get them from secrets
+// Generates azsecret and github clients
+// stores them in the authmap with namespacedname as key
+// checks if the client is present for a namespacedname and if it does checks its validity and if its valid return that token instead of trying to fetch a new one
+func ServiceClient(namespacedName types.NamespacedName, githubToken, tenantId, clientId, clientSecret, vaultName string) (*AuthCache, error) {
+	vaultURI := fmt.Sprintf("https://%s.vault.azure.net/", vaultName)
 
-	cred, err := azidentity.NewClientSecretCredential(tenantID, clientID, clientSecret, nil)
-	if err != nil {
-		l.Fatalf("failed to obtain a credential: %v", err)
+	authcache, ok := authCacheMap.Load(namespacedName)
+	if !ok {
+		// cache not found
+		// generate new client
+		cred, err := azidentity.NewClientSecretCredential(tenantId, clientId, clientSecret, nil)
+		if err != nil {
+			l.Fatalf("failed to obtain a credential: %v", err)
+		}
+
+		// Establish a connection to the Key Vault client
+		azclient, err := azsecrets.NewClient(vaultURI, cred, nil)
+
+		// github client
+		ts := oauth2.StaticTokenSource(
+			&oauth2.Token{AccessToken: githubToken},
+		)
+		tc := oauth2.NewClient(context.Background(), ts)
+		ghclient := github.NewClient(tc)
+		authcache = &AuthCache{azclient, ghclient}
+		authCacheMap.Store(namespacedName, authcache)
 	}
 
-	// Establish a connection to the Key Vault client
-	client, err := azsecrets.NewClient(vaultURI, cred, nil)
+	// cache found
+	// use cache
 
-	return client, nil
-}
-
-func NewGitHubClient() (*github.Client, error) {
-	token := os.Getenv("GITHUB_TOKEN")
-	ts := oauth2.StaticTokenSource(
-		&oauth2.Token{AccessToken: token},
-	)
-	tc := oauth2.NewClient(context.Background(), ts)
-	client := github.NewClient(tc)
-	return client, nil
+	return authcache.(*AuthCache), nil
 }
