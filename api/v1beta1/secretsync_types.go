@@ -38,14 +38,19 @@ type SecretSyncSpec struct {
 
 // AzureKeyVault contains information to connect to Azure Key Vault
 type AzureKeyVault struct {
-	VaultName string `json:"vaultName"`
+	VaultName    string `json:"vaultName"`
+	TenantID     string `json:"tenantId"`
+	ClientID     string `json:"clientId"`
+	ClientSecret string `json:"clientSecret"`
 }
 
 // Github contains information for the GitHub repository
 type Github struct {
-	RepoName         string `json:"repoName,omitempty"`
-	Environment      string `json:"environment,omitempty"`
-	OrganizationName string `json:"organizationName,omitempty"`
+	Token       string `json:"token"`
+	Owner       string `json:"owner"`
+	SecretLevel string `json:"secretLevel"`           // Can be "repo", "org", or "environment"
+	Environment string `json:"environment,omitempty"` // Optional, used for env-level secrets
+	Repo        string `json:"repo,omitempty"`        // Optional, used for repo-level and env-level secrets
 }
 
 // SecretMapping defines the mapping from Key Vault to GitHub
