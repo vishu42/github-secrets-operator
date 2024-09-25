@@ -145,8 +145,10 @@ func main() {
 	}
 
 	if err = (&controller.SecretSyncReconciler{
-		Client: mgr.GetClient(),
-		Scheme: mgr.GetScheme(),
+		AzureClientFactory:  &controller.RealAzureKeyVaultClientFactory{},
+		GitHubClientFactory: &controller.RealGitHubClient{},
+		Client:              mgr.GetClient(),
+		Scheme:              mgr.GetScheme(),
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "SecretSync")
 		os.Exit(1)
