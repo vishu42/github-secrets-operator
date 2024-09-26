@@ -25,10 +25,10 @@ import (
 	l "log"
 
 	"github.com/vishu42/github-secrets-operator/internal/encryption"
+	"golang.org/x/oauth2"
 
 	"github.com/Azure/azure-sdk-for-go/sdk/azidentity"
 	"github.com/Azure/azure-sdk-for-go/sdk/keyvault/azsecrets"
-	"golang.org/x/oauth2"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -37,6 +37,10 @@ import (
 
 	"github.com/google/go-github/v65/github"
 	mainv1beta1 "github.com/vishu42/github-secrets-operator/api/v1beta1"
+)
+
+var (
+	authCacheMap = sync.Map{}
 )
 
 // SecretSyncReconciler struct with the top-level index for CRDs and their associated secrets.
@@ -113,6 +117,12 @@ type GithubRepoService interface {
 type RealAzureKeyVaultClientFactory struct{}
 
 func (f *RealAzureKeyVaultClientFactory) NewClient(authData AzureAuthData) (AzureKeyVaultClient, error) {
+	if authData == (AzureAuthData{}) {
+		return nil, fmt.Errorf("nil auth data")
+	}
+	if authData.ClientID == "" {
+		return nil, fmt.Errorf("client id is not present")
+	}
 	// Initialize the Azure Key Vault client
 	cred, err := azidentity.NewClientSecretCredential(authData.TenantID, authData.ClientID, authData.ClientSecret, nil)
 	if err != nil {
@@ -137,12 +147,9 @@ func (c *RealAzureKeyVaultClient) GetSecret(ctx context.Context, name string, ve
 
 }
 
-type RealGitHubClient struct {
-	client   *github.Client
-	authData GitHubAuthData
-}
+type RealGitHubClientFactory struct{}
 
-func (ghc *RealGitHubClient) NewClient(authData GitHubAuthData) (GitHubClient, error) {
+func (ghc *RealGitHubClientFactory) NewClient(authData GitHubAuthData) (GitHubClient, error) {
 	token := authData.Token
 	// Create GitHub client
 	ts := oauth2.StaticTokenSource(
@@ -151,7 +158,11 @@ func (ghc *RealGitHubClient) NewClient(authData GitHubAuthData) (GitHubClient, e
 	tc := oauth2.NewClient(context.Background(), ts)
 	ghclient := github.NewClient(tc)
 
-	return &RealGitHubClient{client: ghclient, authData: authData}, nil
+	return &RealGitHubClient{ghclient}, nil
+}
+
+type RealGitHubClient struct {
+	client *github.Client
 }
 
 func (ghc *RealGitHubClient) CreateOrUpdateOrgSecret(ctx context.Context, org string, eSecret *github.EncryptedSecret) (*github.Response, error) {
@@ -182,10 +193,6 @@ func (ghc *RealGitHubClient) GetEnvPublicKey(ctx context.Context, repoID int, en
 	return ghc.client.Actions.GetEnvPublicKey(ctx, repoID, env)
 }
 
-var (
-	authCacheMap = sync.Map{}
-)
-
 // +kubebuilder:rbac:groups=main.vishu42.github.io,resources=secretsyncs,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=main.vishu42.github.io,resources=secretsyncs/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=main.vishu42.github.io,resources=secretsyncs/finalizers,verbs=update
@@ -201,6 +208,14 @@ var (
 // - https://pkg.go.dev/sigs.k8s.io/controller-runtime@v0.19.0/pkg/reconcile
 func (r *SecretSyncReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	log := log.FromContext(ctx)
+
+	if r.AzureClientFactory == nil {
+		return ctrl.Result{}, fmt.Errorf("nil azure client factory")
+	}
+
+	if r.GitHubClientFactory == nil {
+		return ctrl.Result{}, fmt.Errorf("nil github client factory")
+	}
 
 	// Fetch the SecretSync instance (CRD)
 	var secretSync mainv1beta1.SecretSync
@@ -382,37 +397,37 @@ func (r *SecretSyncReconciler) SetupWithManager(mgr ctrl.Manager) error {
 // Generates azsecret and github clients for each CRD
 // Stores them in the authmap with namespacedname as key
 // Uses cached clients if already authenticated
-func ServiceClient(namespacedName types.NamespacedName, githubToken, tenantId, clientId, clientSecret, vaultName string) (*AuthCache, error) {
-	vaultURI := fmt.Sprintf("https://%s.vault.azure.net/", vaultName)
+// func ServiceClient(namespacedName types.NamespacedName, githubToken, tenantId, clientId, clientSecret, vaultName string) (*AuthCache, error) {
+// 	vaultURI := fmt.Sprintf("https://%s.vault.azure.net/", vaultName)
 
-	authcache, ok := authCacheMap.Load(namespacedName)
-	if !ok {
-		// Cache not found, generate new client
-		cred, err := azidentity.NewClientSecretCredential(tenantId, clientId, clientSecret, nil)
-		l.Println("tenantId", tenantId)
-		l.Println("clientId", clientId)
-		l.Println("clientsecret", clientSecret)
-		if err != nil {
-			return nil, fmt.Errorf("failed to obtain a credential: %v", err)
-		}
+// 	authcache, ok := authCacheMap.Load(namespacedName)
+// 	if !ok {
+// 		// Cache not found, generate new client
+// 		cred, err := azidentity.NewClientSecretCredential(tenantId, clientId, clientSecret, nil)
+// 		l.Println("tenantId", tenantId)
+// 		l.Println("clientId", clientId)
+// 		l.Println("clientsecret", clientSecret)
+// 		if err != nil {
+// 			return nil, fmt.Errorf("failed to obtain a credential: %v", err)
+// 		}
 
-		// Connect to Azure Key Vault
-		azclient, err := azsecrets.NewClient(vaultURI, cred, nil)
-		if err != nil {
-			return nil, fmt.Errorf("failed to create Azure Key Vault client: %v", err)
-		}
+// 		// Connect to Azure Key Vault
+// 		azclient, err := azsecrets.NewClient(vaultURI, cred, nil)
+// 		if err != nil {
+// 			return nil, fmt.Errorf("failed to create Azure Key Vault client: %v", err)
+// 		}
 
-		// Create GitHub client
-		ts := oauth2.StaticTokenSource(
-			&oauth2.Token{AccessToken: githubToken},
-		)
-		tc := oauth2.NewClient(context.Background(), ts)
-		ghclient := github.NewClient(tc)
+// 		// Create GitHub client
+// 		ts := oauth2.StaticTokenSource(
+// 			&oauth2.Token{AccessToken: githubToken},
+// 		)
+// 		tc := oauth2.NewClient(context.Background(), ts)
+// 		ghclient := github.NewClient(tc)
 
-		authcache = &AuthCache{AzSecretsClient: azclient, GithubClient: ghclient}
-		authCacheMap.Store(namespacedName, authcache)
-	}
+// 		authcache = &AuthCache{AzSecretsClient: azclient, GithubClient: ghclient}
+// 		authCacheMap.Store(namespacedName, authcache)
+// 	}
 
-	// Return cached clients
-	return authcache.(*AuthCache), nil
-}
+// 	// Return cached clients
+// 	return authcache.(*AuthCache), nil
+// }

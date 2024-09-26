@@ -146,7 +146,7 @@ func main() {
 
 	if err = (&controller.SecretSyncReconciler{
 		AzureClientFactory:  &controller.RealAzureKeyVaultClientFactory{},
-		GitHubClientFactory: &controller.RealGitHubClient{},
+		GitHubClientFactory: &controller.RealGitHubClientFactory{},
 		Client:              mgr.GetClient(),
 		Scheme:              mgr.GetScheme(),
 	}).SetupWithManager(mgr); err != nil {

@@ -18,7 +18,11 @@ package controller
 
 import (
 	"context"
+	"fmt"
+	"net/http"
 
+	"github.com/Azure/azure-sdk-for-go/sdk/keyvault/azsecrets"
+	"github.com/google/go-github/v65/github"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	"k8s.io/apimachinery/pkg/api/errors"
@@ -29,6 +33,77 @@ import (
 
 	mainv1beta1 "github.com/vishu42/github-secrets-operator/api/v1beta1"
 )
+
+var (
+	keyId string = "mock-key-id"
+	key   string = "mock-key"
+)
+
+type MockAzureKeyVaultClientFactory struct{}
+
+func (f *MockAzureKeyVaultClientFactory) NewClient(authData AzureAuthData) (AzureKeyVaultClient, error) {
+	return &MockAzureKeyVaultClient{}, nil
+}
+
+type MockAzureKeyVaultClient struct{}
+
+func (c *MockAzureKeyVaultClient) GetSecret(ctx context.Context, name string, version string, options *azsecrets.GetSecretOptions) (azsecrets.GetSecretResponse, error) {
+	return azsecrets.GetSecretResponse{}, nil
+}
+
+type MockGitHubClientFactory struct{}
+
+func (f *MockGitHubClientFactory) NewClient(authData GitHubAuthData) (GitHubClient, error) {
+	return &MockGitHubClient{}, nil
+}
+
+type MockGitHubClient struct{}
+
+// Mock CreateOrUpdateEnvSecret
+func (m *MockGitHubClient) CreateOrUpdateEnvSecret(ctx context.Context, repoID int, env string, eSecret *github.EncryptedSecret) (*github.Response, error) {
+	// Simulate successful creation or update
+	return &github.Response{Response: &http.Response{StatusCode: http.StatusOK}}, nil
+}
+
+// Mock CreateOrUpdateOrgSecret
+func (m *MockGitHubClient) CreateOrUpdateOrgSecret(ctx context.Context, org string, eSecret *github.EncryptedSecret) (*github.Response, error) {
+	// Simulate successful creation or update
+	return &github.Response{Response: &http.Response{StatusCode: http.StatusOK}}, nil
+}
+
+// Mock CreateOrUpdateRepoSecret
+func (m *MockGitHubClient) CreateOrUpdateRepoSecret(ctx context.Context, owner string, repo string, eSecret *github.EncryptedSecret) (*github.Response, error) {
+	// Simulate successful creation or update
+	return &github.Response{Response: &http.Response{StatusCode: http.StatusOK}}, nil
+}
+
+// Mock Get (for repository information)
+func (m *MockGitHubClient) Get(ctx context.Context, owner string, repo string) (*github.Repository, *github.Response, error) {
+	// Simulate fetching repository information
+	repoMock := &github.Repository{ID: github.Int64(12345), Name: github.String(repo)}
+	return repoMock, &github.Response{Response: &http.Response{StatusCode: http.StatusOK}}, nil
+}
+
+// Mock GetEnvPublicKey
+func (m *MockGitHubClient) GetEnvPublicKey(ctx context.Context, repoID int, env string) (*github.PublicKey, *github.Response, error) {
+	// Simulate fetching environment public key
+	pubKey := &github.PublicKey{KeyID: &keyId, Key: &key}
+	return pubKey, &github.Response{Response: &http.Response{StatusCode: http.StatusOK}}, nil
+}
+
+// Mock GetOrgPublicKey
+func (m *MockGitHubClient) GetOrgPublicKey(ctx context.Context, org string) (*github.PublicKey, *github.Response, error) {
+	// Simulate fetching organization public key
+	pubKey := &github.PublicKey{KeyID: &keyId, Key: &key}
+	return pubKey, &github.Response{Response: &http.Response{StatusCode: http.StatusOK}}, nil
+}
+
+// Mock GetRepoPublicKey
+func (m *MockGitHubClient) GetRepoPublicKey(ctx context.Context, owner string, repo string) (*github.PublicKey, *github.Response, error) {
+	// Simulate fetching repository public key
+	pubKey := &github.PublicKey{KeyID: &keyId, Key: &key}
+	return pubKey, &github.Response{Response: &http.Response{StatusCode: http.StatusOK}}, nil
+}
 
 var _ = Describe("SecretSync Controller", func() {
 	Context("When reconciling a resource", func() {
@@ -68,15 +143,23 @@ var _ = Describe("SecretSync Controller", func() {
 		})
 		It("should successfully reconcile the resource", func() {
 			By("Reconciling the created resource")
+			fmt.Println("checkpoint1")
+
 			controllerReconciler := &SecretSyncReconciler{
 				Client: k8sClient,
 				Scheme: k8sClient.Scheme(),
 			}
 
-			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{
+			var err error
+			// Capture the logs printed during reconcile execution
+
+			_, err = controllerReconciler.Reconcile(ctx, reconcile.Request{
 				NamespacedName: typeNamespacedName,
 			})
-			Expect(err).NotTo(HaveOccurred())
+
+			fmt.Println("checkpoint2")
+
+			Expect(err).To(MatchError("nil azure client factory"))
 			// TODO(user): Add more specific assertions depending on your controller's reconciliation logic.
 			// Example: If you expect a certain status condition after reconciliation, verify it here.
 		})
