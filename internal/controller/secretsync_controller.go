@@ -24,6 +24,8 @@ import (
 
 	l "log"
 
+	corev1 "k8s.io/api/core/v1"
+
 	"github.com/vishu42/github-secrets-operator/internal/encryption"
 	"golang.org/x/oauth2"
 
@@ -209,14 +211,6 @@ func (ghc *RealGitHubClient) GetEnvPublicKey(ctx context.Context, repoID int, en
 func (r *SecretSyncReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	log := log.FromContext(ctx)
 
-	if r.AzureClientFactory == nil {
-		return ctrl.Result{}, fmt.Errorf("nil azure client factory")
-	}
-
-	if r.GitHubClientFactory == nil {
-		return ctrl.Result{}, fmt.Errorf("nil github client factory")
-	}
-
 	// Fetch the SecretSync instance (CRD)
 	var secretSync mainv1beta1.SecretSync
 	if err := r.Get(ctx, req.NamespacedName, &secretSync); err != nil {
@@ -224,16 +218,29 @@ func (r *SecretSyncReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
 
+	// Extract sensitive values (ClientSecret and Token) from either direct value or Kubernetes Secret
+	clientSecret, err := r.getSensitiveValue(ctx, secretSync.Spec.AzureKeyVault.ClientSecret, req.Namespace)
+	if err != nil {
+		log.Error(err, "unable to retrieve Azure Key Vault client secret")
+		return ctrl.Result{}, err
+	}
+
+	githubToken, err := r.getSensitiveValue(ctx, secretSync.Spec.Github.Token, req.Namespace)
+	if err != nil {
+		log.Error(err, "unable to retrieve GitHub token")
+		return ctrl.Result{}, err
+	}
+
 	// Extract authentication data from the CRD
 	azureAuthData := AzureAuthData{
 		TenantID:     secretSync.Spec.AzureKeyVault.TenantID,
 		ClientID:     secretSync.Spec.AzureKeyVault.ClientID,
-		ClientSecret: secretSync.Spec.AzureKeyVault.ClientSecret,
+		ClientSecret: clientSecret,
 		VaultName:    secretSync.Spec.AzureKeyVault.VaultName,
 	}
 
 	gitHubAuthData := GitHubAuthData{
-		Token:       secretSync.Spec.Github.Token,
+		Token:       githubToken,
 		Owner:       secretSync.Spec.Github.Owner,
 		Repo:        secretSync.Spec.Github.Repo,
 		SecretLevel: secretSync.Spec.Github.SecretLevel,
@@ -295,6 +302,35 @@ func (r *SecretSyncReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 
 	// Requeue after 10 minutes for the next reconciliation
 	return ctrl.Result{RequeueAfter: 10 * time.Minute}, nil
+}
+
+// getSensitiveValue retrieves a sensitive value, either directly or from a Kubernetes Secret
+func (r *SecretSyncReconciler) getSensitiveValue(ctx context.Context, sensitiveRef mainv1beta1.SensitiveValueRef, namespace string) (string, error) {
+	// Check if the value is provided directly
+	if sensitiveRef.Value != "" {
+		return sensitiveRef.Value, nil
+	}
+
+	// If not, retrieve the value from the referenced Kubernetes Secret
+	if sensitiveRef.ValueFromSecret != nil {
+		secret := &corev1.Secret{}
+		if err := r.Get(ctx, types.NamespacedName{
+			Name:      sensitiveRef.ValueFromSecret.Name,
+			Namespace: namespace,
+		}, secret); err != nil {
+			return "", fmt.Errorf("failed to retrieve secret %s: %w", sensitiveRef.ValueFromSecret.Name, err)
+		}
+
+		// Check if the key exists in the secret data
+		secretData, exists := secret.Data[sensitiveRef.ValueFromSecret.Key]
+		if !exists {
+			return "", fmt.Errorf("key %s not found in secret %s", sensitiveRef.ValueFromSecret.Key, sensitiveRef.ValueFromSecret.Name)
+		}
+
+		return string(secretData), nil
+	}
+
+	return "", fmt.Errorf("no value or secret reference provided")
 }
 
 func (r *SecretSyncReconciler) getPublicKeyForSecretLevel(ctx context.Context, ghc GitHubClient,

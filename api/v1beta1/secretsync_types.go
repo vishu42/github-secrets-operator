@@ -38,19 +38,35 @@ type SecretSyncSpec struct {
 
 // AzureKeyVault contains information to connect to Azure Key Vault
 type AzureKeyVault struct {
-	VaultName    string `json:"vaultName"`
-	TenantID     string `json:"tenantId"`
-	ClientID     string `json:"clientId"`
-	ClientSecret string `json:"clientSecret"`
+	VaultName    string            `json:"vaultName"`
+	TenantID     string            `json:"tenantId"`
+	ClientID     string            `json:"clientId"`
+	ClientSecret SensitiveValueRef `json:"clientSecret"` // Supports both literal and secret reference
+}
+
+// SensitiveValueRef allows specifying a sensitive value directly or referencing a Kubernetes secret
+type SensitiveValueRef struct {
+	// Value can be provided directly in the spec (literal value)
+	Value string `json:"value,omitempty"`
+	// Refers to a Kubernetes secret in the same namespace
+	ValueFromSecret *SecretReference `json:"valueFromSecret,omitempty"`
+}
+
+// SecretReference defines a reference to a key within a Kubernetes secret
+type SecretReference struct {
+	// Name of the secret
+	Name string `json:"name"`
+	// Key within the secret to retrieve the value from
+	Key string `json:"key"`
 }
 
 // Github contains information for the GitHub repository
 type Github struct {
-	Token       string `json:"token"`
-	Owner       string `json:"owner"`
-	SecretLevel string `json:"secretLevel"`           // Can be "repo", "org", or "environment"
-	Environment string `json:"environment,omitempty"` // Optional, used for env-level secrets
-	Repo        string `json:"repo,omitempty"`        // Optional, used for repo-level and env-level secrets
+	Token       SensitiveValueRef `json:"token"`
+	Owner       string            `json:"owner"`
+	SecretLevel string            `json:"secretLevel"`           // Can be "repo", "org", or "environment"
+	Environment string            `json:"environment,omitempty"` // Optional, used for env-level secrets
+	Repo        string            `json:"repo,omitempty"`        // Optional, used for repo-level and env-level secrets
 }
 
 // SecretMapping defines the mapping from Key Vault to GitHub
