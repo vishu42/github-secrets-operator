@@ -20,11 +20,13 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"time"
 
 	"github.com/Azure/azure-sdk-for-go/sdk/keyvault/azsecrets"
 	"github.com/google/go-github/v65/github"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
@@ -35,9 +37,49 @@ import (
 )
 
 var (
-	keyId string = "mock-key-id"
-	key   string = "mock-key"
+	keyId            string = "mock-key-id"
+	key              string = "mock-key"
+	postgresAdmin    string = "admin123"
+	postgresPassword string = "strongpassword"
+
+	MockAzureKeyVaultSecretMap map[string]azsecrets.GetSecretResponse = map[string]azsecrets.GetSecretResponse{
+		"postgres-admin": {
+			SecretBundle: azsecrets.SecretBundle{
+				Value: &postgresAdmin,
+				Attributes: &azsecrets.SecretAttributes{
+					Updated: generateTime("2023-09-25T14:00:00Z"),
+				},
+			},
+		},
+		"postgres-password": {
+			SecretBundle: azsecrets.SecretBundle{
+				Value: &postgresPassword,
+				Attributes: &azsecrets.SecretAttributes{
+					Updated: generateTime("2024-09-25T14:00:00Z"),
+				},
+			},
+		},
+	}
+
+	MockGithubSecretsMap map[string][]string = map[string][]string{}
 )
+
+func generateTime(timestring string) *time.Time {
+	// Parse the time string in UTC
+	parsedTime, err := time.Parse(time.RFC3339, timestring)
+	if err != nil {
+		panic(err)
+	}
+
+	return &parsedTime
+
+}
+
+type MockEncrypter struct{}
+
+func (e *MockEncrypter) EncryptSecretWithPublicKey(publicKey *github.PublicKey, secretName string, secretValue string) (*github.EncryptedSecret, error) {
+	return &github.EncryptedSecret{Name: secretName}, nil
+}
 
 type MockAzureKeyVaultClientFactory struct{}
 
@@ -48,7 +90,12 @@ func (f *MockAzureKeyVaultClientFactory) NewClient(authData AzureAuthData) (Azur
 type MockAzureKeyVaultClient struct{}
 
 func (c *MockAzureKeyVaultClient) GetSecret(ctx context.Context, name string, version string, options *azsecrets.GetSecretOptions) (azsecrets.GetSecretResponse, error) {
-	return azsecrets.GetSecretResponse{}, nil
+	secret, ok := MockAzureKeyVaultSecretMap[name]
+	if !ok {
+		return azsecrets.GetSecretResponse{}, fmt.Errorf("secret doesnt exist")
+	}
+
+	return secret, nil
 }
 
 type MockGitHubClientFactory struct{}
@@ -61,12 +108,15 @@ type MockGitHubClient struct{}
 
 // Mock CreateOrUpdateEnvSecret
 func (m *MockGitHubClient) CreateOrUpdateEnvSecret(ctx context.Context, repoID int, env string, eSecret *github.EncryptedSecret) (*github.Response, error) {
+	// MockGithubSecretsMap[env] = eSecret.Name
+	MockGithubSecretsMap["environment"] = append(MockGithubSecretsMap["environment"], eSecret.Name)
 	// Simulate successful creation or update
 	return &github.Response{Response: &http.Response{StatusCode: http.StatusOK}}, nil
 }
 
 // Mock CreateOrUpdateOrgSecret
 func (m *MockGitHubClient) CreateOrUpdateOrgSecret(ctx context.Context, org string, eSecret *github.EncryptedSecret) (*github.Response, error) {
+	MockGithubSecretsMap["org"] = append(MockGithubSecretsMap["org"], eSecret.Name)
 	// Simulate successful creation or update
 	return &github.Response{Response: &http.Response{StatusCode: http.StatusOK}}, nil
 }
@@ -74,6 +124,7 @@ func (m *MockGitHubClient) CreateOrUpdateOrgSecret(ctx context.Context, org stri
 // Mock CreateOrUpdateRepoSecret
 func (m *MockGitHubClient) CreateOrUpdateRepoSecret(ctx context.Context, owner string, repo string, eSecret *github.EncryptedSecret) (*github.Response, error) {
 	// Simulate successful creation or update
+	MockGithubSecretsMap["repo"] = append(MockGithubSecretsMap["repo"], eSecret.Name)
 	return &github.Response{Response: &http.Response{StatusCode: http.StatusOK}}, nil
 }
 
@@ -119,7 +170,25 @@ var _ = Describe("SecretSync Controller", func() {
 
 		BeforeEach(func() {
 			By("creating the custom resource for the Kind SecretSync")
-			err := k8sClient.Get(ctx, typeNamespacedName, secretsync)
+
+			// Define the Secret object
+			secret := &corev1.Secret{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-secret",
+					Namespace: "default",
+				},
+				Data: map[string][]byte{
+					"token":         []byte("my-github-token"),
+					"client-secret": []byte("my-client-secret"),
+				},
+			}
+
+			// Create the Secret in the cluster using the client
+			err := k8sClient.Create(ctx, secret)
+			Expect(err).ToNot(HaveOccurred())
+
+			// define secretsync crd
+			err = k8sClient.Get(ctx, typeNamespacedName, secretsync)
 			if err != nil && errors.IsNotFound(err) {
 				resource := &mainv1beta1.SecretSync{
 					ObjectMeta: metav1.ObjectMeta{
@@ -127,6 +196,42 @@ var _ = Describe("SecretSync Controller", func() {
 						Namespace: "default",
 					},
 					// TODO(user): Specify other spec details if needed.
+					Spec: mainv1beta1.SecretSyncSpec{
+						AzureKeyVault: mainv1beta1.AzureKeyVault{
+							VaultName: "test-vault",
+							ClientID:  "test-client-id",
+							ClientSecret: mainv1beta1.SensitiveValueRef{
+								ValueFromSecret: &mainv1beta1.SecretReference{
+									Name: "test-secret",
+									Key:  "client-secret",
+								},
+							},
+							TenantID: "test-tenant-id",
+						},
+
+						Github: mainv1beta1.Github{
+							Token: mainv1beta1.SensitiveValueRef{
+								ValueFromSecret: &mainv1beta1.SecretReference{
+									Name: "test-secret",
+									Key:  "token",
+								},
+							},
+							Owner:       "test-owner",
+							SecretLevel: "org",
+							Environment: "test",
+							Repo:        "test-repo",
+						},
+						Mappings: []mainv1beta1.SecretMapping{
+							{
+								GithubSecret:   "POSTGRES_ADMIN",
+								KeyVaultSecret: "postgres-admin",
+							},
+							{
+								GithubSecret:   "POSTGRES_PASSWORD",
+								KeyVaultSecret: "postgres-password",
+							},
+						},
+					},
 				}
 				Expect(k8sClient.Create(ctx, resource)).To(Succeed())
 			}
@@ -138,30 +243,46 @@ var _ = Describe("SecretSync Controller", func() {
 			err := k8sClient.Get(ctx, typeNamespacedName, resource)
 			Expect(err).NotTo(HaveOccurred())
 
+			// Cleanup the Secret resource created in BeforeEach
+			secret := &corev1.Secret{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-secret",
+					Namespace: "default",
+				},
+			}
+			err = k8sClient.Get(ctx, types.NamespacedName{
+				Name:      "test-secret",
+				Namespace: "default",
+			}, secret)
+
+			if err == nil { // Only try to delete if the secret still exists
+				By("Cleaning up the Secret resource")
+				Expect(k8sClient.Delete(ctx, secret)).To(Succeed())
+			}
+
 			By("Cleanup the specific resource instance SecretSync")
 			Expect(k8sClient.Delete(ctx, resource)).To(Succeed())
 		})
 		It("should successfully reconcile the resource", func() {
-			By("Reconciling the created resource")
-			fmt.Println("checkpoint1")
-
+			By("calling the reconcile function without any error")
 			controllerReconciler := &SecretSyncReconciler{
-				Client: k8sClient,
-				Scheme: k8sClient.Scheme(),
+				Encrypter:           &MockEncrypter{},
+				AzureClientFactory:  &MockAzureKeyVaultClientFactory{},
+				GitHubClientFactory: &MockGitHubClientFactory{},
+				Client:              k8sClient,
+				Scheme:              k8sClient.Scheme(),
 			}
 
-			var err error
-			// Capture the logs printed during reconcile execution
-
-			_, err = controllerReconciler.Reconcile(ctx, reconcile.Request{
+			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{
 				NamespacedName: typeNamespacedName,
 			})
-
-			fmt.Println("checkpoint2")
-
-			Expect(err).To(MatchError("nil azure client factory"))
+			Expect(err).ToNot(HaveOccurred())
 			// TODO(user): Add more specific assertions depending on your controller's reconciliation logic.
 			// Example: If you expect a certain status condition after reconciliation, verify it here.
+
+			By("syncing secrets from azure key vault to github")
+			Expect(MockGithubSecretsMap).To(HaveKeyWithValue("org", []string{"POSTGRES_ADMIN", "POSTGRES_PASSWORD"}))
 		})
+
 	})
 })

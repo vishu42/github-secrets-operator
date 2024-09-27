@@ -54,6 +54,7 @@ type SecretSyncReconciler struct {
 	// Add interfaces for external clients
 	AzureClientFactory  AzureKeyVaultClientFactory
 	GitHubClientFactory GitHubClientFactory
+	Encrypter           encryption.Encrypter
 }
 
 type AzureKeyVaultClientFactory interface {
@@ -260,9 +261,13 @@ func (r *SecretSyncReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 		return ctrl.Result{}, err
 	}
 
+	if r.KeyVaultSecretIndex == nil {
+		r.KeyVaultSecretIndex = map[string]map[string]*SecretInfo{}
+	}
+
 	// Initialize the secret index for this specific CRD if not already present
 	if _, exists := r.KeyVaultSecretIndex[req.NamespacedName.String()]; !exists {
-		r.KeyVaultSecretIndex[req.NamespacedName.String()] = make(map[string]*SecretInfo)
+		r.KeyVaultSecretIndex[req.NamespacedName.String()] = map[string]*SecretInfo{}
 	}
 
 	secretIndex := r.KeyVaultSecretIndex[req.NamespacedName.String()]
@@ -368,7 +373,7 @@ func (r *SecretSyncReconciler) createOrUpdateGithubSecret(
 	switch secretSync.Spec.Github.SecretLevel {
 	case "org":
 		// Create or update organization-level secret
-		encryptedSecret, err := encryption.EncryptSecretWithPublicKey(publicKey, mapping.GithubSecret, secretValue)
+		encryptedSecret, err := r.Encrypter.EncryptSecretWithPublicKey(publicKey, mapping.GithubSecret, secretValue)
 		if err != nil {
 			return fmt.Errorf("failed encrypt secret: %v", err)
 		}
@@ -379,7 +384,7 @@ func (r *SecretSyncReconciler) createOrUpdateGithubSecret(
 
 	case "repo":
 		// Create or update repository-level secret
-		encryptedSecret, err := encryption.EncryptSecretWithPublicKey(publicKey, mapping.GithubSecret, secretValue)
+		encryptedSecret, err := r.Encrypter.EncryptSecretWithPublicKey(publicKey, mapping.GithubSecret, secretValue)
 		if err != nil {
 			return fmt.Errorf("failed encrypt secret: %v", err)
 		}
@@ -399,7 +404,7 @@ func (r *SecretSyncReconciler) createOrUpdateGithubSecret(
 			return fmt.Errorf("failed to fetch GitHub repository details: %w", err)
 		}
 		// Create or update environment-level secret using the repo ID
-		encryptedSecret, err := encryption.EncryptSecretWithPublicKey(publicKey, mapping.GithubSecret, secretValue)
+		encryptedSecret, err := r.Encrypter.EncryptSecretWithPublicKey(publicKey, mapping.GithubSecret, secretValue)
 		if err != nil {
 			return fmt.Errorf("failed encrypt secret: %v", err)
 		}
@@ -423,7 +428,6 @@ func (r *SecretSyncReconciler) createOrUpdateGithubSecret(
 
 // SetupWithManager sets up the controller with the Manager.
 func (r *SecretSyncReconciler) SetupWithManager(mgr ctrl.Manager) error {
-	r.KeyVaultSecretIndex = make(map[string]map[string]*SecretInfo)
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&mainv1beta1.SecretSync{}).
 		Complete(r)

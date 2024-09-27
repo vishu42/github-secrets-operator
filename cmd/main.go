@@ -37,6 +37,7 @@ import (
 
 	mainv1beta1 "github.com/vishu42/github-secrets-operator/api/v1beta1"
 	"github.com/vishu42/github-secrets-operator/internal/controller"
+	"github.com/vishu42/github-secrets-operator/internal/encryption"
 	// +kubebuilder:scaffold:imports
 )
 
@@ -147,6 +148,7 @@ func main() {
 	if err = (&controller.SecretSyncReconciler{
 		AzureClientFactory:  &controller.RealAzureKeyVaultClientFactory{},
 		GitHubClientFactory: &controller.RealGitHubClientFactory{},
+		Encrypter:           &encryption.Encrypt{},
 		Client:              mgr.GetClient(),
 		Scheme:              mgr.GetScheme(),
 	}).SetupWithManager(mgr); err != nil {
