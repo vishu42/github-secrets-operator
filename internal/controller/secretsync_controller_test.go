@@ -59,10 +59,43 @@ var (
 				},
 			},
 		},
+		"redis-password": {
+			SecretBundle: azsecrets.SecretBundle{
+				Value: &postgresPassword,
+				Attributes: &azsecrets.SecretAttributes{
+					Updated: generateTime("2024-09-29T10:48:21Z"),
+				},
+			},
+		},
 	}
 
-	MockGithubSecretsMap map[string][]*github.Secret = map[string][]*github.Secret{} //maps secretlevel to secret
+	//maps secretlevel to secret
+	MockGithubSecretsMap map[string][]*github.Secret = map[string][]*github.Secret{
+		"org": {
+			{
+				Name: "REDIS_PASSWORD",
+				UpdatedAt: github.Timestamp{
+					Time: *generateTime("2024-09-29T11:01:15Z"),
+				},
+			},
+		},
+	}
 )
+
+// ConvertRFC3339ToGitHubTimestamp takes an RFC 3339 formatted time string and returns
+// the time in a format suitable for GitHub (ISO 8601 without fractional seconds)
+func ConvertRFC3339ToGitHubTimestamp(rfc3339Time string) (string, error) {
+	// Parse the input string as an RFC 3339 time
+	parsedTime, err := time.Parse(time.RFC3339, rfc3339Time)
+	if err != nil {
+		return "", err
+	}
+
+	// Format the time as ISO 8601 without fractional seconds (which is same as RFC 3339)
+	githubTimestamp := parsedTime.Format("2006-01-02T15:04:05Z")
+
+	return githubTimestamp, nil
+}
 
 func generateTime(timestring string) *time.Time {
 	// Parse the time string in UTC
@@ -288,6 +321,10 @@ var _ = Describe("SecretSync Controller", func() {
 								GithubSecret:   "POSTGRES_PASSWORD",
 								KeyVaultSecret: "postgres-password",
 							},
+							{
+								GithubSecret:   "REDIS_PASSWORD",
+								KeyVaultSecret: "redis-password",
+							},
 						},
 					},
 				}
@@ -341,7 +378,6 @@ var _ = Describe("SecretSync Controller", func() {
 			secretNames := []string{}
 			secrets, ok := MockGithubSecretsMap["org"]
 
-			fmt.Printf("+++++++++++ %+v", MockGithubSecretsMap)
 			if !ok {
 				Expect(fmt.Errorf("secret-level %s not found", "org")).ToNot(HaveOccurred())
 			}
@@ -353,6 +389,36 @@ var _ = Describe("SecretSync Controller", func() {
 
 			By("syncing secrets from azure key vault to github")
 			Expect(secretNames).To(ContainElements("POSTGRES_ADMIN", "POSTGRES_PASSWORD"))
+		})
+
+		It("should not sync github secrets that have last updated date after the last updated date of azure key vault secret", func() {
+			controllerReconciler := &SecretSyncReconciler{
+				Encrypter:           &MockEncrypter{},
+				AzureClientFactory:  &MockAzureKeyVaultClientFactory{},
+				GitHubClientFactory: &MockGitHubClientFactory{},
+				Client:              k8sClient,
+				Scheme:              k8sClient.Scheme(),
+			}
+
+			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: typeNamespacedName,
+			})
+			Expect(err).ToNot(HaveOccurred())
+			// TODO(user): Add more specific assertions depending on your controller's reconciliation logic.
+			// Example: If you expect a certain status condition after reconciliation, verify it here.
+
+			secrets, ok := MockGithubSecretsMap["org"]
+
+			if !ok {
+				Expect(fmt.Errorf("secret-level %s not found", "org")).ToNot(HaveOccurred())
+			}
+
+			// Loop through the secrets to find the one with the matching name
+			for _, secret := range secrets {
+				if secret.Name == "REDIS_PASSWORD" {
+					Expect(secret.UpdatedAt.GetTime()).To(Equal(generateTime("2024-09-29T11:01:15Z")))
+				}
+			}
 		})
 
 	})
