@@ -61,7 +61,7 @@ var (
 		},
 	}
 
-	MockGithubSecretsMap map[string][]string = map[string][]string{}
+	MockGithubSecretsMap map[string][]*github.Secret = map[string][]*github.Secret{} //maps secretlevel to secret
 )
 
 func generateTime(timestring string) *time.Time {
@@ -106,17 +106,75 @@ func (f *MockGitHubClientFactory) NewClient(authData GitHubAuthData) (GitHubClie
 
 type MockGitHubClient struct{}
 
+func (m *MockGitHubClient) GetOrgSecret(ctx context.Context, org, name string) (*github.Secret, *github.Response, error) {
+	// Check if the organization exists in the mock map
+	secrets, ok := MockGithubSecretsMap["org"]
+	if !ok {
+		// Return an error if the organization is not found
+		return nil, &github.Response{Response: &http.Response{StatusCode: http.StatusNotFound}}, nil
+	}
+
+	// Loop through the secrets to find the one with the matching name
+	for _, secret := range secrets {
+		if secret.Name == name {
+			// Return the found secret and a mock response
+			return secret, &github.Response{Response: &http.Response{StatusCode: http.StatusOK}}, nil
+		}
+	}
+
+	// Return an error if the secret is not found
+	return nil, &github.Response{Response: &http.Response{StatusCode: http.StatusNotFound}}, nil
+}
+
+func (m *MockGitHubClient) GetEnvSecret(ctx context.Context, repoID int, env, secretName string) (*github.Secret, *github.Response, error) {
+	secrets, ok := MockGithubSecretsMap["env"]
+	if !ok {
+		// Return an error if the env is not found
+		return nil, &github.Response{Response: &http.Response{StatusCode: http.StatusNotFound}}, nil
+	}
+
+	// Loop through the secrets to find the one with the matching name
+	for _, secret := range secrets {
+		if secret.Name == secretName {
+			// Return the found secret and a mock response
+			return secret, &github.Response{Response: &http.Response{StatusCode: http.StatusOK}}, nil
+		}
+	}
+
+	// Return an error if the secret is not found
+	return nil, &github.Response{Response: &http.Response{StatusCode: http.StatusNotFound}}, nil
+}
+
+func (m *MockGitHubClient) GetRepoSecret(ctx context.Context, owner, repo, name string) (*github.Secret, *github.Response, error) {
+	secrets, ok := MockGithubSecretsMap["repo"]
+	if !ok {
+		// Return an error if the env is not found
+		return nil, &github.Response{Response: &http.Response{StatusCode: http.StatusNotFound}}, nil
+	}
+
+	// Loop through the secrets to find the one with the matching name
+	for _, secret := range secrets {
+		if secret.Name == name {
+			// Return the found secret and a mock response
+			return secret, &github.Response{Response: &http.Response{StatusCode: http.StatusOK}}, nil
+		}
+	}
+
+	// Return an error if the secret is not found
+	return nil, &github.Response{Response: &http.Response{StatusCode: http.StatusNotFound}}, nil
+}
+
 // Mock CreateOrUpdateEnvSecret
 func (m *MockGitHubClient) CreateOrUpdateEnvSecret(ctx context.Context, repoID int, env string, eSecret *github.EncryptedSecret) (*github.Response, error) {
 	// MockGithubSecretsMap[env] = eSecret.Name
-	MockGithubSecretsMap["environment"] = append(MockGithubSecretsMap["environment"], eSecret.Name)
+	MockGithubSecretsMap["environment"] = append(MockGithubSecretsMap["environment"], &github.Secret{Name: eSecret.Name, UpdatedAt: github.Timestamp{Time: time.Now()}})
 	// Simulate successful creation or update
 	return &github.Response{Response: &http.Response{StatusCode: http.StatusOK}}, nil
 }
 
 // Mock CreateOrUpdateOrgSecret
 func (m *MockGitHubClient) CreateOrUpdateOrgSecret(ctx context.Context, org string, eSecret *github.EncryptedSecret) (*github.Response, error) {
-	MockGithubSecretsMap["org"] = append(MockGithubSecretsMap["org"], eSecret.Name)
+	MockGithubSecretsMap["org"] = append(MockGithubSecretsMap["org"], &github.Secret{Name: eSecret.Name, UpdatedAt: github.Timestamp{Time: time.Now()}})
 	// Simulate successful creation or update
 	return &github.Response{Response: &http.Response{StatusCode: http.StatusOK}}, nil
 }
@@ -124,7 +182,7 @@ func (m *MockGitHubClient) CreateOrUpdateOrgSecret(ctx context.Context, org stri
 // Mock CreateOrUpdateRepoSecret
 func (m *MockGitHubClient) CreateOrUpdateRepoSecret(ctx context.Context, owner string, repo string, eSecret *github.EncryptedSecret) (*github.Response, error) {
 	// Simulate successful creation or update
-	MockGithubSecretsMap["repo"] = append(MockGithubSecretsMap["repo"], eSecret.Name)
+	MockGithubSecretsMap["repo"] = append(MockGithubSecretsMap["repo"], &github.Secret{Name: eSecret.Name, UpdatedAt: github.Timestamp{Time: time.Now()}})
 	return &github.Response{Response: &http.Response{StatusCode: http.StatusOK}}, nil
 }
 
@@ -280,8 +338,21 @@ var _ = Describe("SecretSync Controller", func() {
 			// TODO(user): Add more specific assertions depending on your controller's reconciliation logic.
 			// Example: If you expect a certain status condition after reconciliation, verify it here.
 
+			secretNames := []string{}
+			secrets, ok := MockGithubSecretsMap["org"]
+
+			fmt.Printf("+++++++++++ %+v", MockGithubSecretsMap)
+			if !ok {
+				Expect(fmt.Errorf("secret-level %s not found", "org")).ToNot(HaveOccurred())
+			}
+
+			// Loop through the secrets to find the one with the matching name
+			for _, secret := range secrets {
+				secretNames = append(secretNames, secret.Name)
+			}
+
 			By("syncing secrets from azure key vault to github")
-			Expect(MockGithubSecretsMap).To(HaveKeyWithValue("org", []string{"POSTGRES_ADMIN", "POSTGRES_PASSWORD"}))
+			Expect(secretNames).To(ContainElements("POSTGRES_ADMIN", "POSTGRES_PASSWORD"))
 		})
 
 	})
