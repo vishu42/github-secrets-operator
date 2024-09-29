@@ -111,6 +111,9 @@ type GithubActionsService interface {
 	GetOrgPublicKey(ctx context.Context, org string) (*github.PublicKey, *github.Response, error)
 	GetRepoPublicKey(ctx context.Context, owner, repo string) (*github.PublicKey, *github.Response, error)
 	GetEnvPublicKey(ctx context.Context, repoID int, env string) (*github.PublicKey, *github.Response, error)
+	GetOrgSecret(ctx context.Context, org, name string) (*github.Secret, *github.Response, error)
+	GetRepoSecret(ctx context.Context, owner, repo, name string) (*github.Secret, *github.Response, error)
+	GetEnvSecret(ctx context.Context, repoID int, env, secretName string) (*github.Secret, *github.Response, error)
 }
 
 type GithubRepoService interface {
@@ -172,12 +175,23 @@ func (ghc *RealGitHubClient) CreateOrUpdateOrgSecret(ctx context.Context, org st
 	return ghc.client.Actions.CreateOrUpdateOrgSecret(ctx, org, eSecret)
 }
 
+func (ghc *RealGitHubClient) GetOrgSecret(ctx context.Context, org, name string) (*github.Secret, *github.Response, error) {
+	return ghc.client.Actions.GetOrgSecret(ctx, org, name)
+}
+
 func (ghc *RealGitHubClient) CreateOrUpdateRepoSecret(ctx context.Context, owner, repo string, eSecret *github.EncryptedSecret) (*github.Response, error) {
 	return ghc.client.Actions.CreateOrUpdateRepoSecret(ctx, owner, repo, eSecret)
+}
+func (ghc *RealGitHubClient) GetRepoSecret(ctx context.Context, owner, repo, name string) (*github.Secret, *github.Response, error) {
+	return ghc.client.Actions.GetRepoSecret(ctx, owner, repo, name)
 }
 
 func (ghc *RealGitHubClient) CreateOrUpdateEnvSecret(ctx context.Context, repoID int, env string, eSecret *github.EncryptedSecret) (*github.Response, error) {
 	return ghc.client.Actions.CreateOrUpdateEnvSecret(ctx, repoID, env, eSecret)
+}
+
+func (ghc *RealGitHubClient) GetEnvSecret(ctx context.Context, repoID int, env, secretName string) (*github.Secret, *github.Response, error) {
+	return ghc.client.Actions.GetEnvSecret(ctx, repoID, env, secretName)
 }
 
 func (ghc *RealGitHubClient) Get(ctx context.Context, owner, repo string) (*github.Repository, *github.Response, error) {
@@ -282,6 +296,26 @@ func (r *SecretSyncReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 			continue
 		}
 
+		// Fetch GitHub public key and check if the secret already exists in GitHub
+		existingSecret, _, err := r.getGitHubSecret(ctx, gitHubClient, mapping.GithubSecret, gitHubAuthData)
+		if err != nil {
+			log.Error(err, fmt.Sprintf("failed to fetch GitHub secret %s", mapping.GithubSecret))
+			continue
+		}
+
+		// Compare last updated time if the secret exists in GitHub
+		if existingSecret != nil {
+			azureLastUpdated := azSecret.Attributes.Updated // This is the last updated time of the Azure secret
+			gitHubLastUpdated := existingSecret.UpdatedAt   // Assume UpdatedAt gives us the last update timestamp in GitHub
+
+			// Check if the GitHub secret is more up-to-date than the Azure secret
+			if gitHubLastUpdated.After(*azureLastUpdated) {
+				// The GitHub secret is more recent, so no need to update it
+				log.Info("GitHub secret is already up to date, skipping update", "secret", mapping.GithubSecret)
+				continue
+			}
+		}
+
 		// Check if the secret exists in the index and if the update time is the same
 		info, exists := secretIndex[mapping.KeyVaultSecret]
 		if exists && info.LastUpdated != nil && info.LastUpdated.Equal(*azSecret.Attributes.Updated) {
@@ -307,6 +341,36 @@ func (r *SecretSyncReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 
 	// Requeue after 10 minutes for the next reconciliation
 	return ctrl.Result{RequeueAfter: 10 * time.Minute}, nil
+}
+func (r *SecretSyncReconciler) getGitHubSecret(
+	ctx context.Context,
+	gitHubClient GitHubClient,
+	secretName string,
+	authData GitHubAuthData,
+) (*github.Secret, *github.Response, error) {
+
+	// Fetch the secret based on SecretLevel
+	var existingSecret *github.Secret
+	var resp *github.Response
+	var err error
+
+	switch authData.SecretLevel {
+	case "org":
+		existingSecret, resp, err = gitHubClient.GetOrgSecret(ctx, authData.Owner, secretName)
+
+	case "repo":
+		existingSecret, resp, err = gitHubClient.GetRepoSecret(ctx, authData.Owner, authData.Repo, secretName)
+	case "environment":
+		repo, resp, err := gitHubClient.Get(ctx, authData.Owner, authData.Repo)
+		if err != nil {
+			return nil, resp, err
+		}
+		existingSecret, resp, err = gitHubClient.GetEnvSecret(ctx, int(repo.GetID()), authData.Environment, secretName)
+	default:
+		err = fmt.Errorf("invalid secret level: %s", authData.SecretLevel)
+	}
+
+	return existingSecret, resp, err
 }
 
 // getSensitiveValue retrieves a sensitive value, either directly or from a Kubernetes Secret
