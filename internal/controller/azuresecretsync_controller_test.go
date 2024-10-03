@@ -257,7 +257,7 @@ var _ = Describe("SecretSync Controller", func() {
 			Name:      resourceName,
 			Namespace: "default", // TODO(user):Modify as needed
 		}
-		secretsync := &mainv1beta1.SecretSync{}
+		secretsync := &mainv1beta1.AzureSecretSync{}
 
 		BeforeEach(func() {
 			By("creating the custom resource for the Kind SecretSync")
@@ -281,13 +281,13 @@ var _ = Describe("SecretSync Controller", func() {
 			// define secretsync crd
 			err = k8sClient.Get(ctx, typeNamespacedName, secretsync)
 			if err != nil && errors.IsNotFound(err) {
-				resource := &mainv1beta1.SecretSync{
+				resource := &mainv1beta1.AzureSecretSync{
 					ObjectMeta: metav1.ObjectMeta{
 						Name:      resourceName,
 						Namespace: "default",
 					},
 					// TODO(user): Specify other spec details if needed.
-					Spec: mainv1beta1.SecretSyncSpec{
+					Spec: mainv1beta1.AzureSecretSyncSpec{
 						AzureKeyVault: mainv1beta1.AzureKeyVault{
 							VaultName: "test-vault",
 							ClientID:  "test-client-id",
@@ -334,7 +334,7 @@ var _ = Describe("SecretSync Controller", func() {
 
 		AfterEach(func() {
 			// TODO(user): Cleanup logic after each test, like removing the resource instance.
-			resource := &mainv1beta1.SecretSync{}
+			resource := &mainv1beta1.AzureSecretSync{}
 			err := k8sClient.Get(ctx, typeNamespacedName, resource)
 			Expect(err).NotTo(HaveOccurred())
 

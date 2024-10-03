@@ -227,7 +227,7 @@ func (r *SecretSyncReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 	log := log.FromContext(ctx)
 
 	// Fetch the SecretSync instance (CRD)
-	var secretSync mainv1beta1.SecretSync
+	var secretSync mainv1beta1.AzureSecretSync
 	if err := r.Get(ctx, req.NamespacedName, &secretSync); err != nil {
 		log.Error(err, "unable to fetch SecretSync")
 		return ctrl.Result{}, client.IgnoreNotFound(err)
@@ -403,7 +403,7 @@ func (r *SecretSyncReconciler) getSensitiveValue(ctx context.Context, sensitiveR
 }
 
 func (r *SecretSyncReconciler) getPublicKeyForSecretLevel(ctx context.Context, ghc GitHubClient,
-	secretSync mainv1beta1.SecretSync) (*github.PublicKey, *github.Response, error) {
+	secretSync mainv1beta1.AzureSecretSync) (*github.PublicKey, *github.Response, error) {
 	switch secretSync.Spec.Github.SecretLevel {
 	case "org":
 		return ghc.GetOrgPublicKey(ctx, secretSync.Spec.Github.Owner)
@@ -424,7 +424,7 @@ func (r *SecretSyncReconciler) getPublicKeyForSecretLevel(ctx context.Context, g
 func (r *SecretSyncReconciler) createOrUpdateGithubSecret(
 	ctx context.Context,
 	ghc GitHubClient,
-	secretSync mainv1beta1.SecretSync,
+	secretSync mainv1beta1.AzureSecretSync,
 	mapping mainv1beta1.SecretMapping,
 	secretValue string,
 ) error {
@@ -493,7 +493,7 @@ func (r *SecretSyncReconciler) createOrUpdateGithubSecret(
 // SetupWithManager sets up the controller with the Manager.
 func (r *SecretSyncReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
-		For(&mainv1beta1.SecretSync{}).
+		For(&mainv1beta1.AzureSecretSync{}).
 		Complete(r)
 }
 

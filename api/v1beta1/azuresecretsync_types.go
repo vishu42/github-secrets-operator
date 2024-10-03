@@ -23,8 +23,8 @@ import (
 // EDIT THIS FILE!  THIS IS SCAFFOLDING FOR YOU TO OWN!
 // NOTE: json tags are required.  Any new fields you add must have json tags for the fields to be serialized.
 
-// SecretSyncSpec defines the desired state of SecretSync
-type SecretSyncSpec struct {
+// AzureSecretSyncSpec defines the desired state of SecretSync
+type AzureSecretSyncSpec struct {
 	// INSERT ADDITIONAL SPEC FIELDS - desired state of cluster
 	// Important: Run "make" to regenerate code after modifying this file
 
@@ -75,8 +75,8 @@ type SecretMapping struct {
 	GithubSecret   string `json:"githubSecret"`
 }
 
-// SecretSyncStatus defines the observed state of SecretSync
-type SecretSyncStatus struct {
+// AzureSecretSyncStatus defines the observed state of SecretSync
+type AzureSecretSyncStatus struct {
 	// INSERT ADDITIONAL STATUS FIELD - define observed state of cluster
 	// Important: Run "make" to regenerate code after modifying this file
 
@@ -87,24 +87,24 @@ type SecretSyncStatus struct {
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
 
-// SecretSync is the Schema for the secretsyncs API
-type SecretSync struct {
+// AzureSecretSync is the Schema for the secretsyncs API
+type AzureSecretSync struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata,omitempty"`
 
-	Spec   SecretSyncSpec   `json:"spec,omitempty"`
-	Status SecretSyncStatus `json:"status,omitempty"`
+	Spec   AzureSecretSyncSpec   `json:"spec,omitempty"`
+	Status AzureSecretSyncStatus `json:"status,omitempty"`
 }
 
 // +kubebuilder:object:root=true
 
-// SecretSyncList contains a list of SecretSync
-type SecretSyncList struct {
+// AzureSecretSyncList contains a list of SecretSync
+type AzureSecretSyncList struct {
 	metav1.TypeMeta `json:",inline"`
 	metav1.ListMeta `json:"metadata,omitempty"`
-	Items           []SecretSync `json:"items"`
+	Items           []AzureSecretSync `json:"items"`
 }
 
 func init() {
-	SchemeBuilder.Register(&SecretSync{}, &SecretSyncList{})
+	SchemeBuilder.Register(&AzureSecretSync{}, &AzureSecretSyncList{})
 }
