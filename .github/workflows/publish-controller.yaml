@@ -1,0 +1,64 @@
+name: Publish Controller
+
+on:
+  push:
+    branches:
+      - main  # Trigger on push to the 'main' branch
+  pull_request:
+    branches:
+      - main  # Trigger on pull requests to the 'main' branch
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    env:
+      IMAGE_NAME: ghcr.io/${{ github.repository }}  # For GitHub Container Registry (GHCR)
+      DOCKERFILE_PATH: ./Dockerfile  # Path to Dockerfile
+      TARGETOS: linux  # Target OS for cross-compiling
+      TARGETARCH: amd64  # Target architecture for cross-compiling
+
+    steps:
+      # Step 1: Check out the repository
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      # Step 2: Set up Go environment
+      - name: Set up Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: 1.23  # Adjust the Go version if necessary
+
+      # Step 3: Cache Go modules for faster builds
+      - name: Cache Go modules
+        uses: actions/cache@v3
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
+          restore-keys: |
+            ${{ runner.os }}-go-
+
+      # Step 4: Build the controller binary
+      - name: Build controller binary
+        run: |
+          CGO_ENABLED=0 GOOS=${{ env.TARGETOS }} GOARCH=${{ env.TARGETARCH }} go build -a -o bin/manager cmd/main.go
+
+      # Step 5: Log in to the container registry (Docker Hub or GitHub Container Registry)
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v2
+        with:
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Step 6: Build and push the Docker image
+      - name: Build and push Docker image
+        run: |
+          docker build -t $IMAGE_NAME:latest -f $DOCKERFILE_PATH .
+          docker push $IMAGE_NAME:latest
+
+      # Step 7: Notify success (Optional)
+      - name: Notify success
+        if: success()
+        run: echo "The controller has been built and pushed successfully."
