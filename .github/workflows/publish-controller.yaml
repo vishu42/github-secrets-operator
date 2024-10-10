@@ -23,6 +23,17 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v3
 
+      # version
+      - name: Git Version
+        id: version
+        uses: codacy/git-version@2.7.1
+        with:
+          release-branch: main     
+      - name: Tag the version
+        run: |
+          git tag ${{ steps.version.outputs.version }}
+          git push --tags
+
       # Step 2: Set up Go environment
       - name: Set up Go
         uses: actions/setup-go@v4
@@ -56,8 +67,8 @@ jobs:
       # Step 6: Build and push the Docker image
       - name: Build and push Docker image
         run: |
-          docker build -t $IMAGE_NAME:latest -f $DOCKERFILE_PATH .
-          docker push $IMAGE_NAME:latest
+          docker build -t $IMAGE_NAME:${{ steps.version.outputs.version }} -f $DOCKERFILE_PATH .
+          docker push $IMAGE_NAME:${{ steps.version.outputs.version }}
 
       # Step 7: Notify success (Optional)
       - name: Notify success
