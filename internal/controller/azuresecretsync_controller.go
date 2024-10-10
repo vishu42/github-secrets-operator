@@ -49,12 +49,28 @@ var (
 type SecretSyncReconciler struct {
 	client.Client
 	Scheme              *runtime.Scheme
-	KeyVaultSecretIndex map[string]map[string]*SecretInfo // CRD reference -> Secret name -> SecretInfo
+	KeyVaultSecretIndex KeyVaultSecretIndex // CRD reference -> Secret name -> SecretInfo
 
 	// Add interfaces for external clients
 	AzureClientFactory  AzureKeyVaultClientFactory
 	GitHubClientFactory GitHubClientFactory
 	Encrypter           encryption.Encrypter
+}
+
+type KeyVaultSecretIndex struct {
+	index sync.Map
+}
+
+func (k *KeyVaultSecretIndex) Set(key string, value map[string]*SecretInfo) {
+	k.index.Store(key, value)
+}
+
+func (k *KeyVaultSecretIndex) Get(key string) (map[string]*SecretInfo, bool) {
+	value, ok := k.index.Load(key)
+	if !ok {
+		return nil, ok
+	}
+	return value.(map[string]*SecretInfo), ok
 }
 
 type AzureKeyVaultClientFactory interface {
@@ -275,16 +291,11 @@ func (r *SecretSyncReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 		return ctrl.Result{}, err
 	}
 
-	if r.KeyVaultSecretIndex == nil {
-		r.KeyVaultSecretIndex = map[string]map[string]*SecretInfo{}
+	secretMapForCrd, ok := r.KeyVaultSecretIndex.Get(req.NamespacedName.String())
+	if !ok {
+		secretMapForCrd = map[string]*SecretInfo{}
+		r.KeyVaultSecretIndex.Set(req.NamespacedName.String(), map[string]*SecretInfo{})
 	}
-
-	// Initialize the secret index for this specific CRD if not already present
-	if _, exists := r.KeyVaultSecretIndex[req.NamespacedName.String()]; !exists {
-		r.KeyVaultSecretIndex[req.NamespacedName.String()] = map[string]*SecretInfo{}
-	}
-
-	secretIndex := r.KeyVaultSecretIndex[req.NamespacedName.String()]
 
 	// Iterate over the secret mappings in the CRD
 	for _, mapping := range secretSync.Spec.Mappings {
@@ -317,7 +328,7 @@ func (r *SecretSyncReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 		}
 
 		// Check if the secret exists in the index and if the update time is the same
-		info, exists := secretIndex[mapping.KeyVaultSecret]
+		info, exists := secretMapForCrd[mapping.KeyVaultSecret]
 		if exists && info.LastUpdated != nil && info.LastUpdated.Equal(*azSecret.Attributes.Updated) {
 			// Secret hasn't changed, skip syncing
 			continue
@@ -331,7 +342,7 @@ func (r *SecretSyncReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 		}
 
 		// Update the index with the new secret info
-		secretIndex[mapping.KeyVaultSecret] = &SecretInfo{
+		secretMapForCrd[mapping.KeyVaultSecret] = &SecretInfo{
 			Value:          *azSecret.Value,
 			LastUpdated:    azSecret.Attributes.Updated,
 			ExistsInGithub: true,
