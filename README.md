@@ -1,9 +1,6 @@
 # github-secrets-operator
 Sync's github secrets with azure key vault. WIP to support other secret stores as well like hashicorp vault etc
 
-## Description
-// TODO(user): An in-depth paragraph about your project and overview of use
-
 ## Getting Started
 
 ### Prerequisites
