@@ -3,20 +3,20 @@ name: Publish Controller
 on:
   push:
     branches:
-      - main  # Trigger on push to the 'main' branch
+      - main # Trigger on push to the 'main' branch
   pull_request:
     branches:
-      - main  # Trigger on pull requests to the 'main' branch
+      - main # Trigger on pull requests to the 'main' branch
 
 jobs:
   build:
     runs-on: ubuntu-latest
 
     env:
-      IMAGE_NAME: ghcr.io/${{ github.repository }}  # For GitHub Container Registry (GHCR)
-      DOCKERFILE_PATH: ./Dockerfile  # Path to Dockerfile
-      TARGETOS: linux  # Target OS for cross-compiling
-      TARGETARCH: amd64  # Target architecture for cross-compiling
+      IMAGE_NAME: ghcr.io/${{ github.repository }} # For GitHub Container Registry (GHCR)
+      DOCKERFILE_PATH: ./Dockerfile # Path to Dockerfile
+      TARGETOS: linux # Target OS for cross-compiling
+      TARGETARCH: amd64 # Target architecture for cross-compiling
 
     steps:
       # Step 1: Check out the repository
@@ -28,7 +28,7 @@ jobs:
         id: version
         uses: codacy/git-version@2.7.1
         with:
-          release-branch: main     
+          release-branch: main
       - name: Tag the version
         run: |
           git tag ${{ steps.version.outputs.version }}
@@ -38,7 +38,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v4
         with:
-          go-version: 1.23  # Adjust the Go version if necessary
+          go-version: 1.23 # Adjust the Go version if necessary
 
       # Step 3: Cache Go modules for faster builds
       - name: Cache Go modules
@@ -70,7 +70,20 @@ jobs:
           docker build -t $IMAGE_NAME:${{ steps.version.outputs.version }} -f $DOCKERFILE_PATH .
           docker push $IMAGE_NAME:${{ steps.version.outputs.version }}
 
-      # Step 7: Notify success (Optional)
-      - name: Notify success
-        if: success()
-        run: echo "The controller has been built and pushed successfully."
+      # Step 7: Download helm binary
+      - name: Set up Helm
+        uses: azure/setup-helm@v1
+        with:
+          version: v3.16.2 # Specify the Helm version you want to use
+
+      # Step 8: Helm login to github container registry
+      - name: Log in to GitHub Container Registry
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | helm registry login ghcr.io -u ${{ github.actor }} --password-stdin
+
+      # Step 9: Publish helm chart
+      - name: Package Helm Chart
+        run: |
+          helm chart save ./charts/github-secret-operator ghcr.io/${{ github.repository_owner }}/github-secrets-operator-helm:${{ steps.version.outputs.version }}
+          helm chart push ghcr.io/${{ github.repository_owner }}/your-chart-name:${{ steps.version.outputs.version }}
