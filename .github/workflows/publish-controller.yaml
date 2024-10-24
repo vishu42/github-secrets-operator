@@ -89,4 +89,4 @@ jobs:
       - name: Package Helm Chart
         run: |
           helm package ./charts/github-secrets-operator --version ${{ steps.version.outputs.version }}
-          helm push ./github-secrets-operator-${{ steps.version.outputs.version }}.tgz oci://ghcr.io/${{ github.repository_owner }}-helm
+          helm push ./github-secrets-operator-${{ steps.version.outputs.version }}.tgz oci://ghcr.io/${{ github.repository }}-helm
