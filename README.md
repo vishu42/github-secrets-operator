@@ -10,6 +10,13 @@ Sync's github secrets with azure key vault. WIP to support other secret stores a
 - Access to a Kubernetes v1.11.3+ cluster.
 
 ### To Deploy on the cluster
+
+**Install helm chart**
+
+```sh
+helm install secret-operator oci://ghcr.io/vishu42/github-secrets-operator-chart --version 0.0.11
+```
+
 **Build and push your image to the location specified by `IMG`:**
 
 ```sh
@@ -108,4 +115,3 @@ distributed under the License is distributed on an "AS IS" BASIS,
 WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
-
